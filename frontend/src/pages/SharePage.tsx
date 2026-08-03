@@ -171,7 +171,6 @@ export default function SharePage() {
       window.removeEventListener("online", updateOnlineStatus);
       window.removeEventListener("offline", updateOnlineStatus);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const flushQueue = async () => {
@@ -387,7 +386,6 @@ export default function SharePage() {
       document.removeEventListener("visibilitychange", handleVisibility);
       stopSharing();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
