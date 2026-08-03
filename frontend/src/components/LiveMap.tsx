@@ -96,7 +96,14 @@ export default function LiveMap({ locations, isOnline, personName }: LiveMapProp
           <div class="text-sm font-medium">${personName}</div>
           <div class="text-xs text-gray-400">${latest.latitude.toFixed(6)}, ${latest.longitude.toFixed(6)}</div>
           <div class="text-xs text-gray-400">Accuracy: ${latest.accuracy ? `±${Math.round(latest.accuracy)}m` : "?"}</div>
-          <div class="text-xs text-gray-400">${new Date(latest.timestamp).toLocaleTimeString()}</div>
+          <div class="text-xs text-gray-400 mb-2">${new Date(latest.timestamp).toLocaleTimeString()}</div>
+          <button 
+            onclick="window.open('https://www.google.com/maps?q=${latest.latitude},${latest.longitude}', '_blank', 'noopener,noreferrer')"
+            title="Open this location in Google Maps"
+            class="flex items-center justify-center gap-2 w-full px-3 py-1.5 mt-2 text-xs font-medium text-white bg-surface-700 hover:bg-surface-600 rounded-lg border border-white/10 transition-colors shadow-sm"
+          >
+            📍 Open in Google Maps
+          </button>
         `);
     }
 

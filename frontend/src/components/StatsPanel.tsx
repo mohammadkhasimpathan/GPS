@@ -54,17 +54,19 @@ interface StatCardProps {
   value: string;
   valueClass?: string;
   subValue?: string;
+  children?: React.ReactNode;
 }
 
-function StatCard({ icon, label, value, valueClass = "text-white", subValue }: StatCardProps) {
+function StatCard({ icon, label, value, valueClass = "text-white", subValue, children }: StatCardProps) {
   return (
-    <div className="stat-card animate-fade-in">
+    <div className="stat-card animate-fade-in flex flex-col h-full">
       <div className="flex items-center gap-2 mb-2">
         <div className="text-brand-400 opacity-70">{icon}</div>
         <span className="stat-label">{label}</span>
       </div>
       <span className={`stat-value ${valueClass}`}>{value}</span>
       {subValue && <span className="text-xs text-white/30 mt-0.5">{subValue}</span>}
+      {children && <div className="mt-auto pt-3">{children}</div>}
     </div>
   );
 }
@@ -79,7 +81,25 @@ export default function StatsPanel({ location, distanceTravelled }: StatsPanelPr
         label="Position"
         value={loc ? `${loc.latitude.toFixed(5)}` : "—"}
         subValue={loc ? `${loc.longitude.toFixed(5)}` : undefined}
-      />
+      >
+        <button
+          onClick={() => {
+            if (loc) {
+              window.open(`https://www.google.com/maps?q=${loc.latitude},${loc.longitude}`, '_blank', 'noopener,noreferrer');
+            }
+          }}
+          disabled={!loc}
+          title="Open this location in Google Maps"
+          className={`flex items-center justify-center w-full gap-1.5 px-2 py-1.5 mt-1 text-[11px] font-medium rounded-md border transition-all duration-200 ${
+            loc 
+              ? "bg-surface-700/80 hover:bg-surface-600 border-white/10 text-white shadow-sm cursor-pointer" 
+              : "bg-surface-800/50 border-white/5 text-white/30 cursor-not-allowed"
+          }`}
+        >
+          <span>📍</span>
+          {loc ? "Open in Google Maps" : "Location unavailable"}
+        </button>
+      </StatCard>
       <StatCard
         icon={<Route className="w-4 h-4" />}
         label="Distance"
