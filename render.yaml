@@ -6,7 +6,7 @@ services:
     region: oregon
     plan: free
     rootDir: backend
-    buildCommand: pip install -r requirements.txt && python manage.py migrate --no-input && python manage.py collectstatic --no-input
+    buildCommand: pip install -r requirements.txt && python manage.py migrate --no-input && python manage.py collectstatic --no-input && python setup_admin.py
     startCommand: daphne -b 0.0.0.0 -p $PORT guardianlink.asgi:application
     envVars:
       - key: PYTHON_VERSION
