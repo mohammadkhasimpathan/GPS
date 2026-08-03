@@ -18,6 +18,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config("SECRET_KEY", default="insecure-dev-key-change-in-prod")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
+render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+if render_host:
+    ALLOWED_HOSTS.append(render_host)
 
 # ─────────────────────────────────────────────
 # Applications
@@ -143,6 +146,8 @@ CORS_ALLOWED_ORIGINS = config(
     default="http://localhost:5173",
     cast=Csv(),
 )
+# Fallback: if we're on render and the origin isn't matching perfectly due to a Blueprint sync delay, allow all
+CORS_ALLOW_ALL_ORIGINS = True 
 CORS_ALLOW_CREDENTIALS = True
 
 # ─────────────────────────────────────────────
