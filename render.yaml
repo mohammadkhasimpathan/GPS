@@ -27,11 +27,11 @@ services:
           name: guardianlink-redis
           property: connectionString
       - key: ALLOWED_HOSTS
-        value: "guardianlink-backend.onrender.com"
+        value: "guardianlink-backend-yp5s.onrender.com"
       - key: CORS_ORIGIN
-        value: "https://guardianlink.onrender.com"
+        value: "https://guardianlink-zrnm.onrender.com"
       - key: FRONTEND_URL
-        value: "https://guardianlink.onrender.com"
+        value: "https://guardianlink-zrnm.onrender.com"
     healthCheckPath: /api/health/
 
   # ── Frontend: React SPA (Static) ────────────────────────────────────────
@@ -59,9 +59,9 @@ services:
       - key: NODE_VERSION
         value: "20"
       - key: VITE_API_URL
-        value: "https://guardianlink-backend.onrender.com/api"
+        value: "https://guardianlink-backend-yp5s.onrender.com/api"
       - key: VITE_WS_URL
-        value: "wss://guardianlink-backend.onrender.com"
+        value: "wss://guardianlink-backend-yp5s.onrender.com"
 
   # ── Redis (Free) ────────────────────────────────────────────────────────
   - type: redis
