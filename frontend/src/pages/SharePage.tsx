@@ -26,8 +26,8 @@ import axios from "axios";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
 
-// Fixed vehicle location (opens Google Maps app on mobile if installed)
-const VEHICLE_MAPS_URL = "https://maps.app.goo.gl/tpAtUz3g172AFpj3A?g_st=iw";
+// Fixed vehicle location (force opens in browser instead of native app)
+const VEHICLE_MAPS_URL = "https://maps.google.com/maps?q=https://maps.app.goo.gl/tpAtUz3g172AFpj3A&hl=en";
 
 // ── Device info helpers ──────────────────────────────────────────────────
 async function getDeviceInfo() {
