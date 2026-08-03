@@ -9,6 +9,8 @@ services:
     buildCommand: pip install -r requirements.txt && python manage.py migrate --no-input && python manage.py collectstatic --no-input
     startCommand: daphne -b 0.0.0.0 -p $PORT guardianlink.asgi:application
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
       - key: DJANGO_SETTINGS_MODULE
         value: guardianlink.settings
       - key: SECRET_KEY
@@ -54,6 +56,8 @@ services:
         source: /*
         destination: /index.html
     envVars:
+      - key: NODE_VERSION
+        value: "20"
       - key: VITE_API_URL
         value: "https://guardianlink-backend.onrender.com/api"
       - key: VITE_WS_URL
