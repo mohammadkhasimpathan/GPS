@@ -130,6 +130,7 @@ export default function SharePage() {
   const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
   const [connectionType, setConnectionType] = useState<string | null>(null);
   const [pingCount, setPingCount] = useState(0);
+  const [lastSentTime, setLastSentTime] = useState<number | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [queuedCount, setQueuedCount] = useState(0);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -187,6 +188,7 @@ export default function SharePage() {
       try {
         await axios.post(`${API_BASE}/location/${token}/`, item.payload);
         setPingCount((n) => n + 1);
+        setLastSentTime(Date.now());
       } catch {
         remaining.push(item);
       }
@@ -238,6 +240,7 @@ export default function SharePage() {
       speed: pos.coords.speed,
       heading: pos.coords.heading,
       altitude: pos.coords.altitude,
+      timestamp: new Date(pos.timestamp).toISOString(),
       ...deviceInfo,
     };
 
@@ -250,6 +253,7 @@ export default function SharePage() {
     try {
       await axios.post(`${API_BASE}/location/${token}/`, payload);
       setPingCount((n) => n + 1);
+      setLastSentTime(Date.now());
     } catch (err: unknown) {
       const httpStatus = (err as { response?: { status?: number } })?.response?.status;
 
@@ -320,6 +324,7 @@ export default function SharePage() {
     setStatus("requesting");
     setErrorMsg("");
     setPingCount(0);
+    setLastSentTime(null);
 
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
@@ -506,11 +511,18 @@ export default function SharePage() {
                 </div>
 
                 <div className="text-center text-white/30">
-                  {pingCount} update{pingCount !== 1 ? "s" : ""} sent
-                  {queuedCount > 0 && (
-                    <span className="ml-2 text-amber-400/80">
-                      · {queuedCount} queued
-                    </span>
+                  <div>
+                    {pingCount} update{pingCount !== 1 ? "s" : ""} sent
+                    {queuedCount > 0 && (
+                      <span className="ml-2 text-amber-400/80">
+                        · {queuedCount} queued
+                      </span>
+                    )}
+                  </div>
+                  {lastSentTime && (
+                    <div className="mt-1 text-[10px] text-white/20">
+                      Last sent at {new Date(lastSentTime).toLocaleTimeString()}
+                    </div>
                   )}
                 </div>
 
@@ -527,6 +539,7 @@ export default function SharePage() {
                   stopSharing();
                   setStatus("idle");
                   setPingCount(0);
+                  setLastSentTime(null);
                 }}
                 className="w-full text-center text-xs text-white/25 hover:text-white/40 transition-colors py-1"
               >

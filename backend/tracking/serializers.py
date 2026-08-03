@@ -99,4 +99,5 @@ class LocationCreateSerializer(serializers.ModelSerializer):
             "device_type",
             "timezone",
             "language",
+            "timestamp",
         ]

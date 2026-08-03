@@ -7,6 +7,7 @@ Tracking models:
 import uuid
 from django.db import models
 from django.contrib.auth.models import User
+from django.utils import timezone as django_timezone
 
 
 class Person(models.Model):
@@ -62,7 +63,7 @@ class Location(models.Model):
     device_type = models.CharField(max_length=50, null=True, blank=True)
     timezone = models.CharField(max_length=60, null=True, blank=True)
     language = models.CharField(max_length=30, null=True, blank=True)
-    timestamp = models.DateTimeField(auto_now_add=True)
+    timestamp = models.DateTimeField(default=django_timezone.now)
 
     class Meta:
         ordering = ["-timestamp"]
