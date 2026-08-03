@@ -6,10 +6,7 @@ services:
     region: oregon
     plan: free
     rootDir: backend
-    buildCommand: |
-      pip install -r requirements.txt &&
-      python manage.py migrate --no-input &&
-      python manage.py collectstatic --no-input
+    buildCommand: pip install -r requirements.txt && python manage.py migrate --no-input && python manage.py collectstatic --no-input
     startCommand: daphne -b 0.0.0.0 -p $PORT guardianlink.asgi:application
     envVars:
       - key: DJANGO_SETTINGS_MODULE
@@ -33,7 +30,7 @@ services:
         value: "https://guardianlink.onrender.com"
       - key: FRONTEND_URL
         value: "https://guardianlink.onrender.com"
-    healthCheckPath: /api/profile/
+    healthCheckPath: /api/health/
 
   # ── Frontend: React SPA (Static) ────────────────────────────────────────
   - type: web
@@ -51,9 +48,6 @@ services:
       - path: /*
         name: X-Content-Type-Options
         value: nosniff
-      - path: /*
-        name: Referrer-Policy
-        value: strict-origin-when-cross-origin
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
@@ -67,13 +61,17 @@ services:
       - key: VITE_WS_URL
         value: "wss://guardianlink-backend.onrender.com"
 
-# ── Database ────────────────────────────────────────────────────────────────
+  # ── Redis (Free) ────────────────────────────────────────────────────────
+  - type: redis
+    name: guardianlink-redis
+    region: oregon
+    plan: free
+    ipAllowList: []
+
+# ── PostgreSQL (Free) ───────────────────────────────────────────────────────
 databases:
   - name: guardianlink-db
     databaseName: guardianlink
     user: guardianlink
+    region: oregon
     plan: free
-
-# ── Redis ───────────────────────────────────────────────────────────────────
-# Note: Add a Redis instance manually in the Render dashboard.
-# Link it to guardianlink-backend via REDIS_URL env var.
