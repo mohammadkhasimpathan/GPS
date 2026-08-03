@@ -1,0 +1,79 @@
+services:
+  # ── Backend: Django + Daphne (ASGI) ────────────────────────────────────
+  - type: web
+    name: guardianlink-backend
+    runtime: python
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: |
+      pip install -r requirements.txt &&
+      python manage.py migrate --no-input &&
+      python manage.py collectstatic --no-input
+    startCommand: daphne -b 0.0.0.0 -p $PORT guardianlink.asgi:application
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: guardianlink.settings
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: guardianlink-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: guardianlink-redis
+          property: connectionString
+      - key: ALLOWED_HOSTS
+        value: "guardianlink-backend.onrender.com"
+      - key: CORS_ORIGIN
+        value: "https://guardianlink.onrender.com"
+      - key: FRONTEND_URL
+        value: "https://guardianlink.onrender.com"
+    healthCheckPath: /api/profile/
+
+  # ── Frontend: React SPA (Static) ────────────────────────────────────────
+  - type: web
+    name: guardianlink
+    runtime: static
+    region: oregon
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: "https://guardianlink-backend.onrender.com/api"
+      - key: VITE_WS_URL
+        value: "wss://guardianlink-backend.onrender.com"
+
+# ── Database ────────────────────────────────────────────────────────────────
+databases:
+  - name: guardianlink-db
+    databaseName: guardianlink
+    user: guardianlink
+    plan: free
+
+# ── Redis ───────────────────────────────────────────────────────────────────
+# Note: Add a Redis instance manually in the Render dashboard.
+# Link it to guardianlink-backend via REDIS_URL env var.
