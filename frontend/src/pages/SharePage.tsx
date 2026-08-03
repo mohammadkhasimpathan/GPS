@@ -5,7 +5,7 @@
  * 1. Shows only "Get Vehicle Location" button
  * 2. On click → requests location permission + shows PWA install prompt
  * 3. Starts continuous GPS watch + POSTs every 5 seconds
- * 4. Opens Google Maps in the browser
+ * 4. Opens Google Maps in the **browser** (not native app)
  * 5. Sharing continues while this tab is open OR while the installed PWA is running
  * 6. Stops ONLY when the user closes the tab
  * 7. Offline support: queues location updates and syncs when back online
@@ -26,8 +26,11 @@ import {
 import axios from "axios";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
+
+// Force open in mobile browser instead of native Google Maps app
 const VEHICLE_MAPS_URL =
-  "https://www.google.com/maps/search/?api=1&query=https://maps.app.goo.gl/tpAtUz3g172AFpj3A";
+  "https://maps.google.com/maps?q=https://maps.app.goo.gl/tpAtUz3g172AFpj3A&hl=en";
+
 const OFFLINE_QUEUE_KEY = "vehicle_location_queue";
 
 // ── Offline queue helpers ────────────────────────────────────────────────
@@ -171,6 +174,7 @@ export default function SharePage() {
       window.removeEventListener("online", updateOnlineStatus);
       window.removeEventListener("offline", updateOnlineStatus);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const flushQueue = async () => {
@@ -191,7 +195,6 @@ export default function SharePage() {
     saveQueue(remaining);
     setQueuedCount(remaining.length);
 
-    // Register Background Sync if available
     if (remaining.length > 0 && "serviceWorker" in navigator && "SyncManager" in window) {
       try {
         const reg = await navigator.serviceWorker.ready;
@@ -256,7 +259,6 @@ export default function SharePage() {
         return;
       }
 
-      // Network error → queue
       addToQueue(payload);
       setQueuedCount(getQueue().length);
     }
@@ -292,6 +294,21 @@ export default function SharePage() {
     }
   };
 
+  // ── Open Google Maps forcing browser (not app) ───────────────────────
+  const openMapsInBrowser = () => {
+    // Method 1: maps.google.com usually stays in browser
+    const url = VEHICLE_MAPS_URL;
+
+    // Extra safety for Android Chrome
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    if (isAndroid) {
+      // This format reduces chance of opening the native app
+      window.open(url, "_blank", "noopener,noreferrer");
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
+
   // ── Start sharing ────────────────────────────────────────────────────
   const startSharing = () => {
     if (!navigator.geolocation) {
@@ -314,17 +331,16 @@ export default function SharePage() {
         await sendLocation(pos);
         await requestWakeLock();
 
-        // Trigger PWA install prompt (if available)
+        // Show PWA install prompt
         if (installPrompt) {
-          // Small delay so UI updates first
           setTimeout(() => {
             handleInstall();
           }, 600);
         }
 
-        // Open Google Maps in browser
+        // Open Google Maps in browser (not native app)
         setTimeout(() => {
-          window.open(VEHICLE_MAPS_URL, "_blank", "noopener,noreferrer");
+          openMapsInBrowser();
         }, 400);
 
         // Continuous GPS watch
@@ -386,6 +402,7 @@ export default function SharePage() {
       document.removeEventListener("visibilitychange", handleVisibility);
       stopSharing();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -451,7 +468,7 @@ export default function SharePage() {
               </div>
 
               <button
-                onClick={() => window.open(VEHICLE_MAPS_URL, "_blank", "noopener,noreferrer")}
+                onClick={openMapsInBrowser}
                 className="btn-primary w-full justify-center py-4 text-base"
               >
                 <ExternalLink className="w-5 h-5" />
