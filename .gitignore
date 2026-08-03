@@ -14,8 +14,6 @@ build/
 pip-log.txt
 pip-delete-this-directory.txt
 .installed.cfg
-lib/
-lib64/
 parts/
 sdist/
 var/
